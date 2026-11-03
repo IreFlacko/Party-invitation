@@ -255,63 +255,40 @@ var CONFIG = {
   }
   $('seal').addEventListener('click', openIt);
 
-  var dbp = null, userp = null;
-  (async function(){
-    try {
-      if (!window.claude || !claude.use) return;
-      userp = await claude.use("user");
-      dbp = await claude.use("db");
-      if (dbp && userp && await userp.isOwner()) showOwner();
-    } catch(e) {}
-  })();
-
-  function li(list, name){
-    var el = document.createElement('li'); el.textContent = name || 'Unnamed guest'; list.appendChild(el);
-  }
-  function showOwner(){
-    $('owner').style.display = 'block';
-    dbp.collection('rsvps').onSnapshot(function(snap){
-      var yes = $('yesList'), no = $('noList'); yes.innerHTML = ''; no.innerHTML = '';
-      var y = 0, n = 0;
-      snap.docs.forEach(function(d){
-        var v = d.data() || {};
-        if (v.answer === 'yes') { y++; li(yes, v.name); } else { n++; li(no, v.name); }
-      });
-      if (!y) yes.innerHTML = '<li class="none" style="list-style:none;margin-left:-20px">No one yet</li>';
-      if (!n) no.innerHTML = '<li class="none" style="list-style:none;margin-left:-20px">No one yet</li>';
-      $('ownerSum').textContent = y + ' attending, ' + n + ' cannot attend';
-    }, function(){ $('ownerSum').textContent = 'Could not load the list.'; });
-  }
-
-  document.querySelectorAll('[data-answer]').forEach(function(b){
+  var submitting = false;
+  var buttons = document.querySelectorAll('[data-answer]');
+  buttons.forEach(function(b){
     b.addEventListener('click', async function(){
+      if (submitting) return;
       var who = $('guest').value.trim();
       var out = $('reply');
       if (!who) { out.textContent = 'Please add your name first.'; $('guest').focus(); return; }
       var yes = b.getAttribute('data-answer') === 'yes';
-      var ok = false;
+      submitting = true;
+      buttons.forEach(function(button){ button.disabled = true; });
+      out.textContent = 'Sending your reply…';
+      var controller = new AbortController();
+      var timeout = setTimeout(function(){ controller.abort(); }, 20000);
       try {
-        var id = userp && await userp.id();
-        if (dbp && id) {
-          await dbp.collection('rsvps').doc(id).set({name: who, answer: yes ? 'yes' : 'no', at: Date.now()});
-          ok = true;
-        }
-      } catch(e) {}
-      out.textContent = '';
-      if (ok) {
+        var response = await fetch('https://formspree.io/f/mljjoqgp', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: who,
+            attendance: yes ? 'Yes' : 'No',
+            event: 'Irene and Daphne birthday — 28 November 2026'
+          }),
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error('Submission failed');
         out.textContent = yes ? 'Splendid. We look forward to seeing you, ' + who + '.'
                               : 'A pity. You will be missed, ' + who + '.';
-      } else {
-        out.textContent = 'Your reply could not be saved here.';
-        if (CONFIG.replyTo) {
-          var msg = who + (yes ? ' will attend' : ' cannot attend') + ' the birthday of ' + CONFIG.name1 + ' and ' + CONFIG.name2 + '.';
-          var a = document.createElement('a');
-          a.href = 'sms:' + CONFIG.replyTo + '?&body=' + encodeURIComponent(msg);
-          a.textContent = ' Send it by text instead.';
-          out.appendChild(a);
-        } else {
-          out.textContent += ' Please let Irene or Daphne know directly.';
-        }
+      } catch(e) {
+        out.textContent = 'We could not confirm your reply was saved. Please try again, or let Irene or Daphne know directly.';
+      } finally {
+        clearTimeout(timeout);
+        submitting = false;
+        buttons.forEach(function(button){ button.disabled = false; });
       }
     });
   });
